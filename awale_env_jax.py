@@ -1,9 +1,12 @@
-class Awale:
-    def __init__(self, player: int = 0):
-        self.state = [4] * 12
-        self.scores = [0, 0]
+import jax.numpy as jnp
+
+
+class AwaleJAX:
+    def __init__(self, player: jnp.int8 = 0):
         self.current_player = player
-        self.action_space = list(range(player * 6, (player + 1) * 6))
+        self.action_space = jnp.arange(player * 6, (player + 1) * 6, dtype=jnp.int8)
+        self.state = jnp.array([4] * 12, dtype=jnp.int8)
+        self.scores = jnp.zeros(2, dtype=jnp.int8)
 
     def step(self, action):
         reward = -0.1
@@ -15,23 +18,23 @@ class Awale:
 
         # Collect and distribute seeds
         seeds = self.state[action]
-        self.state[action] = 0
+        self.state = self.state.at[action].set(0)
         current_pit = action
 
         while seeds > 0:
             current_pit = (current_pit + 1) % 12
             if current_pit != action:
-                self.state[current_pit] += 1
+                self.state = self.state.at[current_pit].add(1)
                 seeds -= 1
 
         # Capture seeds if possible
         captured = self._capture_seeds(current_pit)
-        self.scores[self.current_player] += captured
+        self.scores = self.scores.at[self.current_player].add(captured)
         reward += 0.5 * captured
 
         # Check if the game is over
 
-        if max(self.scores) > 23:
+        if jnp.max(self.scores) > 23:
             done = True
             reward += self._calculate_end_game_reward()
             info["winner"] = self._determine_winner()
@@ -42,8 +45,8 @@ class Awale:
             info["winner"] = self._determine_winner()
         else:
             self.current_player = 1 - self.current_player
-            self.action_space = list(
-                range(self.current_player * 6, (self.current_player + 1) * 6)
+            self.action_space = jnp.arange(
+                self.current_player * 6, (self.current_player + 1) * 6, dtype=jnp.int8
             )
 
         return self.state, reward, done, info
@@ -62,20 +65,20 @@ class Awale:
             and 2 <= self.state[last_pit] <= 3
         ):
             captured += self.state[last_pit]
-            self.state[last_pit] = 0
+            self.state = self.state.at[last_pit].set(0)
             last_pit -= 1
         return captured
 
     def _handle_empty_side(self):
         # If one side is empty, all remaining seeds go to the other player
-        self.scores[0] += sum(self.state[:6])
-        self.scores[1] += sum(self.state[6:])
-        self.state = [0] * 12
+        self.scores = self.scores.at[0].add(sum(self.state[:6]))
+        self.scores = self.scores.at[1].add(sum(self.state[6:]))
+        self.state = jnp.zeros_like(self.state)
 
     def _is_player_side_empty(self, player):
         start = player * 6
         end = start + 6
-        return all(self.state[i] == 0 for i in range(start, end))
+        return jnp.all(self.state[start:end] == 0)
 
     def _calculate_end_game_reward(self):
         if self.scores[self.current_player] > self.scores[1 - self.current_player]:
@@ -91,10 +94,11 @@ class Awale:
             return 1
         return -1  # Draw
 
-    def reset(self):
-        self.state = [4] * 12
-        self.scores = [0, 0]
-        self.current_player = 0
+    def reset(self, player: jnp.int8 = 0):
+        self.current_player = player
+        self.action_space = jnp.arange(player * 6, (player + 1) * 6, dtype=jnp.int8)
+        self.state = jnp.array([4] * 12, dtype=jnp.int8)
+        self.scores = jnp.zeros(2, dtype=jnp.int8)
         return self.state
 
     def render(self):
