@@ -1,8 +1,8 @@
 import pytest
 import jax.numpy as jnp
 from jax.random import PRNGKey
-from AwaleEnv.env import AwaleJAX
-from AwaleEnv.utils import State
+from awale.env import AwaleJAX
+from awale.utils import State
 
 # Constantes pour les tests
 INITIAL_SEEDS = 4
