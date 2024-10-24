@@ -1,7 +1,14 @@
 import jax.numpy as jnp
 from jax import jit, lax
 from typing import NamedTuple, Tuple, Dict
-from AwaleEnv.utils import distribute_seeds, capture_seeds, State, update_game_state
+from AwaleEnv.utils import (
+    distribute_seeds,
+    capture_seeds,
+    State,
+    update_game_state,
+    get_action_space,
+)
+from AwaleEnv.viewer import save_board_svg
 import chex
 from typing_extensions import TypeAlias
 import jax.random as random
@@ -17,42 +24,39 @@ CAPTURE_REWARD_MULTIPLIER = 0.5
 
 class AwaleJAX:
     """
-    Implémentation du jeu Awale utilisant JAX pour des performances optimales.
-    Le jeu suit les règles traditionnelles de l'Awale avec capture de graines.
+    Implementation of the Awale game using JAX for optimum performance.
+    The game follows the traditional Awale rules with seed capture.
     """
 
     def __init__(self):
         """
-        Initialise une nouvelle partie d'Awale.
-        Crée l'état initial du jeu en utilisant une clé aléatoire fixe.
+        Initiates a new game of Awale.
+        Creates the initial state of the game using a fixed random key.
         """
         self.state = self.reset(PRNGKey(0))
 
     @staticmethod
+    @jit
     def reset(key: PRNGKey) -> State:
         """
-        Réinitialise ou commence une nouvelle partie.
+        Resets or starts a new game.
 
         Args:
-            key: Clé PRNGKey pour la génération de nombres aléatoires
+            key: PRNGKey for random number generation
 
         Returns:
-            State: État initial du jeu
+            State: Initial state of play
         """
-        # Détermine aléatoirement le premier joueur (0 ou 1)
+        # Randomly determines the first player (0 or 1)
         current_player = (random.uniform(key) > 0.5).astype(jnp.int8)
 
-        # Calcule l'espace d'actions valides pour le joueur actuel
-        action_space = jnp.arange(
-            current_player * PLAYER_SIDE_SIZE,
-            (current_player + 1) * PLAYER_SIDE_SIZE,
-            dtype=jnp.int8,
-        )
+        # Calculates the space of valid actions for the current player
+        action_space = get_action_space(current_player)
 
-        # Crée le plateau initial avec 4 graines dans chaque trou
+        # Create the initial tray with 4 seeds in each hole
         board = jnp.full(BOARD_SIZE, SEEDS_PER_PIT, dtype=jnp.int8)
 
-        # Initialise les scores à zéro pour les deux joueurs
+        # Sets scores to zero for both players
         scores = jnp.zeros(2, dtype=jnp.int8)
 
         return State(
@@ -63,79 +67,81 @@ class AwaleJAX:
             current_player=current_player,
         )
 
-    @staticmethod
-    @jit
-    def step(state: State, action: jnp.int8) -> Tuple[State, float, bool, Dict]:
+    def step(self, state: State, action: jnp.int8) -> Tuple[State, float, bool]:
         """
-        Exécute une action dans le jeu.
+        Performs an action in the game.
 
         Args:
-            state: État actuel du jeu
-            action: Action choisie (index du trou)
+            state: Current state of play
+            action: Current state of play
 
         Returns:
-            Tuple contenant:
-            - Nouvel état du jeu
-            - Récompense obtenue
-            - Indicateur de fin de partie
-            - Informations supplémentaires (gagnant)
+            Tuple containing:
+            - New game state
+            - Reward obtained
+            - End of game indicator
         """
-        # Collecte et distribue les graines
+        # Collects and distributes seeds
         seeds = state.board[action]
         board = state.board.at[action].set(0)
 
-        # Distribution des graines
+        # Seed distribution
         board, final_pit = distribute_seeds(board, action, seeds)
 
-        # Capture des graines si possible
+        # Capture seeds if possible
         board, captured = capture_seeds(board, final_pit, state.current_player)
 
-        # Mise à jour du score et calcul de la récompense initiale
+        # Updating the score and calculating the initial reward
         score = state.score.at[state.current_player].add(captured)
         reward = CAPTURE_REWARD_MULTIPLIER * captured
 
-        # Mise à jour de l'état du jeu
-        (
-            new_board,
-            new_scores,
-            new_player,
-            done,
-            new_reward,
-            winner,
-            new_action_space,
-        ) = update_game_state(board, score, state.current_player)
+        # Game status update
+        (new_board, new_score, done, new_reward, new_player) = update_game_state(
+            board, score, state.current_player, reward
+        )
 
-        # Ajout de la nouvelle récompense
-        reward += new_reward
+        # Filtering of valid actions (non-empty holes)
+        # Calculates valid action space for the next player
+        new_action_space = get_action_space(new_player)
 
-        # Filtrage des actions valides (trous non vides)
-        valid_actions = jnp.where(board[new_action_space] > 0)[0]
-        new_action_space = new_action_space[valid_actions]
+        # Create a mask for valid actions (positions with stones)
+        valid_actions_mask = board[new_action_space] > 0
 
-        # Création du nouvel état
+        # Filter action space to only valid actions
+        new_action_space = jnp.where(
+            valid_actions_mask, new_action_space, jnp.zeros_like(new_action_space)
+        )
+        new_action_space = new_action_space[valid_actions_mask]
+
+        # Creating a new state
         new_state = State(
             board=new_board,
             action_space=new_action_space,
             key=state.key,
-            score=new_scores,
+            score=new_score,
             current_player=new_player,
         )
-
-        return new_state, reward, done, {"winner": winner}
+        state = self.state
+        return new_state, new_reward, done
 
     @staticmethod
-    def render(state: State) -> None:
+    def render(state: State, filename: str = "awale_board.svg") -> None:
         """
-        Affiche l'état actuel du plateau de jeu dans la console.
+        Displays the current state of the game board in the console.
 
         Args:
-            state: État actuel du jeu à afficher
+            state: Current state of the game to be displayed
+            filename: File name for saving the SVG file
         """
-        # Prépare les lignes du plateau pour l'affichage
-        top_row = state.board[6:0:-1]  # Inverse la ligne du haut pour l'affichage
+        save_board_svg(state.board, state.score, filename)
+
+    def __repr__(self) -> str:
+        state = self.state
+        # Prepares the tray lines for display
+        top_row = state.board[6:0:-1]  # Inverts the top line for the display
         bottom_row = state.board[6:]
 
-        # Construction de l'affichage
+        # Display construction
         board_display = [
             f"Player 2: {state.score[1]:2d}",
             "   ┌────┬────┬────┬────┬────┬────┐",
@@ -146,5 +152,6 @@ class AwaleJAX:
             f"Player 1: {state.score[0]:2d}",
         ]
 
-        # Affiche le plateau
+        # Displays the set
         print("\n".join(board_display))
+        return "\n".join(board_display)
