@@ -12,24 +12,29 @@ Board: TypeAlias = chex.Array
 
 
 class State(NamedTuple):
-    board: Board
-    action_space: chex.Array
-    key: chex.PRNGKey
-    score: chex.Array
-    current_player: chex.Numeric
+    """The state of the game"""
+
+    board: Board  # The current state of the game
+    action_space: chex.Array  # The valid actions for the current player
+    key: chex.PRNGKey  # The random key for the game
+    score: chex.Array  # The scores for the two players
+    current_player: chex.Numeric  # The current player (0 or 1)
 
 
-def distribute_seeds(board, current_pit, seeds) -> Tuple[Board, jnp.int8]:
+@jit
+def distribute_seeds(
+    board: Board, current_pit: jnp.int8, seeds: jnp.int8
+) -> Tuple[Board, jnp.int8]:
     """Distribute seeds in the pits"""
 
     # We'll create a function that contains the loop body
     def loop_body(carry):
         seeds_carry, current_pit_carry, state_carry = carry
-        current_pit_carry = (current_pit_carry + 1) % 12
+        current_pit_carry = (current_pit_carry + 1) % 12  # Move to the next pit
         # Use lax.cond to conditionally update the state
         state_carry = lax.cond(
             current_pit_carry != action,
-            lambda s: s.at[current_pit_carry].add(1),
+            lambda s: s.at[current_pit_carry].add(1),  # Add a seed to the pit
             lambda s: s,
             state_carry,
         )
@@ -53,7 +58,10 @@ def distribute_seeds(board, current_pit, seeds) -> Tuple[Board, jnp.int8]:
 
 
 @jit
-def capture_seeds(board, last_pit, current_player) -> jnp.int8:
+def capture_seeds(
+    board: Board, last_pit: jnp.int8, current_player: jnp.int8
+) -> Tuple[Board, jnp.int8]:
+    """Capture seeds from the opponent's side"""
     opponent_side = (1 - current_player) * 6
 
     def condition(carry):
@@ -84,7 +92,9 @@ def capture_seeds(board, last_pit, current_player) -> jnp.int8:
 
 
 @jit
-def calculate_end_game_reward(scores, current_player):
+def calculate_end_game_reward(
+    scores: chex.Array, current_player: jnp.int8
+) -> jnp.float16:
     """Calculate the reward when the game ends"""
     return lax.select(
         scores[current_player] > scores[1 - current_player],
@@ -98,7 +108,7 @@ def calculate_end_game_reward(scores, current_player):
 
 
 @jit
-def determine_winner(scores):
+def determine_winner(scores: chex.Array) -> jnp.int8:
     """Determine the winner of the game"""
     return lax.select(
         scores[0] > scores[1],
@@ -108,7 +118,7 @@ def determine_winner(scores):
 
 
 @jit
-def is_player_side_empty(player: jnp.int8, board):
+def is_player_side_empty(player: jnp.int8, board: Board) -> jnp.bool_:
     """Check if the player's side is empty"""
     start = player * 6
     player_side = lax.dynamic_slice(board, (start,), (6,))
@@ -116,7 +126,7 @@ def is_player_side_empty(player: jnp.int8, board):
 
 
 @jit
-def handle_empty_side(board, scores) -> jnp.array:
+def handle_empty_side(board: Board, scores: chex.Array) -> Tuple[Board, chex.Array]:
     """Handle the case when one player's side is empty"""
     # If one side is empty, all remaining seeds go to the other player
     scores = scores.at[0].add(jnp.sum(board[:6], dtype=jnp.int8))
@@ -125,7 +135,8 @@ def handle_empty_side(board, scores) -> jnp.array:
     return board, scores
 
 
-def get_action_space(current_player):
+@jit
+def get_action_space(current_player: jnp.int8) -> chex.Array:
     """Returns pre-computed action spaces for both players."""
     return lax.select(
         current_player == 0,
@@ -134,41 +145,43 @@ def get_action_space(current_player):
     )
 
 
-def score_end_game_state(state_scores_player_info):
-    board, scores, current_player = state_scores_player_info
-    reward = calculate_end_game_reward(scores, current_player)
-    winner = determine_winner(scores)
-    action_space = get_action_space(current_player)
-    return board, scores, current_player, True, reward, winner, action_space
-
-
-def empty_side_end_game(state_scores_player_info):
-    state, scores, current_player = state_scores_player_info
-    new_state, new_scores = handle_empty_side(state, scores)
-    reward = calculate_end_game_reward(scores, current_player)
-    winner = determine_winner(scores)
-    action_space = get_action_space(current_player)
-    return new_state, new_scores, current_player, True, reward, winner, action_space
-
-
-def switch_player(state_scores_player_info):
-    state, scores, current_player = state_scores_player_info
-    new_player = 1 - current_player
-    action_space = get_action_space(new_player)
-    return state, scores, new_player, False, 0.0, current_player, action_space
-
-
-def update_game_state(board, scores, current_player):
-    return lax.cond(
-        jnp.max(scores) > 23,
-        score_end_game_state,
-        lambda x: lax.cond(
-            jnp.logical_or(
-                is_player_side_empty(0, board), is_player_side_empty(1, board)
-            ),
-            empty_side_end_game,
-            switch_player,
-            x,
-        ),
-        (board, scores, current_player),
+@jit
+def update_game_state(
+    board: jnp.array,
+    score: jnp.array,
+    current_player: jnp.int8,
+    reward: jnp.float16 = 0.0,
+) -> Tuple[Board, chex.Array, jnp.bool_, jnp.float16, jnp.int8]:
+    """Update the game state after a move"""
+    # Check if the game ends by score
+    done = jnp.where(
+        jnp.max(score) > 23, True, False
+    )  # The game ends when a player reaches 24 points
+    reward = jnp.where(
+        done, reward + calculate_end_game_reward(score, current_player), reward
     )
+
+    # Check if the game ends by empty side
+    empty_side_condition = jnp.logical_or(
+        is_player_side_empty(0, board), is_player_side_empty(1, board)
+    )
+
+    board, score = lax.cond(
+        empty_side_condition,
+        lambda x: handle_empty_side(*x),
+        lambda x: x,
+        (board, score),
+    )
+
+    done = jnp.where(empty_side_condition, True, done)
+    reward = jnp.where(
+        empty_side_condition,
+        reward + calculate_end_game_reward(score, current_player),
+        reward,
+    )
+    # Switch to the next player
+    current_player = jnp.where(done, current_player, 1 - current_player)
+
+    current_player = jnp.where(done, determine_winner(score), current_player)
+
+    return board, score, done, reward, current_player
