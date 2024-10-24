@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import random
 
 
-from AwaleEnv.utils import (
+from awale.utils import (
     State,
     distribute_seeds,
     capture_seeds,

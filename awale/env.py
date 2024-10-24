@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 from jax import jit, lax
 from typing import NamedTuple, Tuple, Dict
-from AwaleEnv.utils import (
+from awale.utils import (
     distribute_seeds,
     capture_seeds,
     State,
@@ -9,7 +9,7 @@ from AwaleEnv.utils import (
     get_action_space,
     calculate_reward,
 )
-from AwaleEnv.viewer import save_board_svg
+from awale.viewer import save_board_svg
 import chex
 from typing_extensions import TypeAlias
 import jax.random as random
