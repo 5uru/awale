@@ -1,6 +1,8 @@
+from functools import partial
+
 import jax.numpy as jnp
 from jax import jit, lax
-
+import jax
 from typing import NamedTuple, Tuple
 
 import chex
@@ -150,16 +152,12 @@ def update_game_state(
     board: jnp.array,
     score: jnp.array,
     current_player: jnp.int8,
-    reward: jnp.float16 = 0.0,
-) -> Tuple[Board, chex.Array, jnp.bool_, jnp.float16, jnp.int8]:
+) -> Tuple[Board, chex.Array, jnp.bool_, jnp.int8]:
     """Update the game state after a move"""
     # Check if the game ends by score
     done = jnp.where(
         jnp.max(score) > 23, True, False
     )  # The game ends when a player reaches 24 points
-    reward = jnp.where(
-        done, reward + calculate_end_game_reward(score, current_player), reward
-    )
 
     # Check if the game ends by empty side
     empty_side_condition = jnp.logical_or(
@@ -174,14 +172,87 @@ def update_game_state(
     )
 
     done = jnp.where(empty_side_condition, True, done)
-    reward = jnp.where(
-        empty_side_condition,
-        reward + calculate_end_game_reward(score, current_player),
-        reward,
-    )
+
     # Switch to the next player
     current_player = jnp.where(done, current_player, 1 - current_player)
 
     current_player = jnp.where(done, determine_winner(score), current_player)
 
-    return board, score, done, reward, current_player
+    return board, score, done, current_player
+
+
+@jit
+def calculate_reward(
+    current_board,
+    previous_board,
+    current_score,
+    previous_score,
+    player_id,
+    game_over=False,
+):
+    """
+    Calculate reward for an Awale game state transition in JAX.
+
+    Args:
+        current_board: jnp.ndarray - Current state of the board (12 pits)
+        previous_board: jnp.ndarray - Previous state of the board
+        current_score: jnp.ndarray - Current scores for both players
+        previous_score: jnp.ndarray - Previous scores for both players
+        player_id: int - Current player (0 or 1)
+        game_over: bool - Whether the game has ended
+
+    Returns:
+        float: Reward value for the current state
+    """
+    reward = 0.0
+
+    # Immediate reward based on seeds captured
+    seeds_captured = current_score[player_id] - previous_score[player_id]
+    reward += seeds_captured * 10.0  # Base points for capturing seeds
+
+    # Strategic position rewards
+    def evaluate_position(board, player):
+        # Adjust indices for 12-pit board (6 pits per player)
+        player_pits = jnp.where(player == 0, board[:6], board[6:12])
+
+        # Reward for keeping seeds in play
+        seeds_in_play = jnp.sum(player_pits)
+        position_value = seeds_in_play * 0.5
+
+        # Reward for having moves available (non-empty pits)
+        available_moves = jnp.sum(player_pits > 0) * 2.0
+
+        # Penalty for vulnerable positions (pits with 2 or 3 seeds)
+        vulnerable_pits = jnp.sum((player_pits == 2) | (player_pits == 3))
+        position_value -= vulnerable_pits * 1.5
+
+        # Add reward for available moves
+        position_value += available_moves
+
+        return position_value
+
+    # Add position evaluation to reward
+    current_position_value = evaluate_position(current_board, player_id)
+    previous_position_value = evaluate_position(previous_board, player_id)
+    reward += current_position_value - previous_position_value
+
+    # End game rewards
+    def game_over_rewards(reward):
+        win_bonus = jnp.where(
+            current_score[player_id] > current_score[1 - player_id], 100, 0
+        )
+        loss_penalty = jnp.where(
+            current_score[player_id] < current_score[1 - player_id], -50, 0
+        )
+        draw_bonus = jnp.where(
+            current_score[player_id] == current_score[1 - player_id], 25, 0
+        )
+        return reward + win_bonus + loss_penalty + draw_bonus
+
+    reward = lax.cond(game_over, game_over_rewards, lambda x: x, reward)
+
+    # Penalty for illegal moves (if any pit has more than 48 seeds)
+    illegal_move_penalty = jnp.where(jnp.max(current_board) > 48, -1000, 0)
+    reward += illegal_move_penalty
+
+    return reward

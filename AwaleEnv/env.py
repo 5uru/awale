@@ -7,6 +7,7 @@ from AwaleEnv.utils import (
     State,
     update_game_state,
     get_action_space,
+    calculate_reward,
 )
 from AwaleEnv.viewer import save_board_svg
 import chex
@@ -93,11 +94,10 @@ class AwaleJAX:
 
         # Updating the score and calculating the initial reward
         score = state.score.at[state.current_player].add(captured)
-        reward = CAPTURE_REWARD_MULTIPLIER * captured
 
         # Game status update
-        (new_board, new_score, done, new_reward, new_player) = update_game_state(
-            board, score, state.current_player, reward
+        (new_board, new_score, done, new_player) = update_game_state(
+            board, score, state.current_player
         )
 
         # Filtering of valid actions (non-empty holes)
@@ -121,8 +121,16 @@ class AwaleJAX:
             score=new_score,
             current_player=new_player,
         )
-        state = self.state
-        return new_state, new_reward, done
+        reward = calculate_reward(
+            current_board=new_board,
+            previous_board=state.board,
+            current_score=new_score,
+            previous_score=state.score,
+            player_id=state.current_player,
+            game_over=done,
+        )
+        self.state = new_state
+        return new_state, reward, done
 
     @staticmethod
     def render(state: State, filename: str = "awale_board.svg") -> None:
