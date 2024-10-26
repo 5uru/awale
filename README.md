@@ -10,3 +10,9 @@
 - https://towardsdatascience.com/vectorize-and-parallelize-rl-environments-with-jax-q-learning-at-the-speed-of-light-49d07373adf5
 - https://towardsdatascience.com/a-gentle-introduction-to-deep-reinforcement-learning-in-jax-c1e45a179b92
 - https://www.collimator.ai/tutorials/training-a-reinforcement-learning-agent-to-balance-an-inverted-pendulum
+- https://github.com/egeozanozyedek/RL-Algorithms-from-Scratch/blob/master/Term_Project_Final_Report.pdf
+- https://page.mi.fu-berlin.de/block/concibe2008.pdf
+- https://storm.genie.stanford.edu/
+- https://medium.com/@samina.amin/deep-q-learning-dqn-71c109586bae
+- https://medium.com/geekculture/actor-critic-implementing-actor-critic-methods-82efb998c273
+- https://github.com/tsmatz/reinforcement-learning-tutorials/blob/master/03-actor-critic.ipynb
