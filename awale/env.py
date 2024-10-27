@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from jax import jit, lax
-from typing import NamedTuple, Tuple, Dict
+from jax import jit
+from typing import Tuple
 from awale.utils import (
     distribute_seeds,
     capture_seeds,
@@ -10,8 +10,6 @@ from awale.utils import (
     calculate_reward,
 )
 from awale.viewer import save_board_svg
-import chex
-from typing_extensions import TypeAlias
 import jax.random as random
 from jax.random import PRNGKey
 

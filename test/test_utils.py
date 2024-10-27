@@ -41,7 +41,7 @@ def test_distribute_seeds():
 
     new_board, last_pit = distribute_seeds(board, current_pit, seeds)
     expected = jnp.array([0, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4], dtype=jnp.int8)
-    assert (new_board == expected).all()
+    assert jnp.array_equal(new_board, expected)
     assert last_pit == 4
 
 
@@ -87,7 +87,7 @@ def test_update_game_state_switch_player():
     (new_board, new_scores, done, winner) = update_game_state(
         board, scores, current_player
     )
-    assert done == False
+    assert not done
     assert winner == 1
     assert jnp.array_equal(new_board, board)
 

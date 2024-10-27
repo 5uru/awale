@@ -1,8 +1,6 @@
-from functools import partial
-
 import jax.numpy as jnp
 from jax import jit, lax
-import jax
+
 from typing import NamedTuple, Tuple
 
 import chex

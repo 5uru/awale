@@ -16,3 +16,4 @@
 - https://medium.com/@samina.amin/deep-q-learning-dqn-71c109586bae
 - https://medium.com/geekculture/actor-critic-implementing-actor-critic-methods-82efb998c273
 - https://github.com/tsmatz/reinforcement-learning-tutorials/blob/master/03-actor-critic.ipynb
+- https://docs.kidger.site/equinox/
