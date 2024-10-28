@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import equinox as eqx
 from typing import List, Tuple
 import numpy as np
-from model import AwaleNetwork
+from model import AwaleNetwork, compute_gradients
 
 
 @pytest.fixture
@@ -19,8 +19,7 @@ def sample_game_state():
     """Create a sample game state."""
     # 12 pits with random seeds (0-4) + 2 scores
     key = jax.random.PRNGKey(1)
-    pits = jax.random.randint(key, (12,), 0, 5)
-    return pits
+    return jax.random.randint(key, (12,), 0, 5)
 
 
 @pytest.fixture
@@ -115,13 +114,8 @@ def test_network_gradients():
     valid_actions = jnp.array([0, 1, 2])
     score = jnp.array([0, 0])
 
-    def loss_fn(network):
-        output = network(game_state, valid_actions, score)
-        return jnp.mean(output)
-
-    # Compute gradients
-    grad_fn = jax.grad(loss_fn)
-    grads = grad_fn(network)
+    # Compute gradients using the helper function
+    grads = compute_gradients(network, game_state, valid_actions, score)
 
     # Check that gradients exist and are not None
     assert grads is not None
@@ -138,7 +132,7 @@ def test_network_jit():
     valid_actions = jnp.array([0, 1, 2])
     score = jnp.array([0, 0])
 
-    @jax.jit
+    @eqx.filter_jit  # Use equinox's filter_jit instead of jax.jit
     def forward(network, state, actions, score):
         return network(state, actions, score)
 

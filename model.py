@@ -67,13 +67,8 @@ class AwaleNetwork(eqx.Module):
         state_features = jnp.concatenate([game_state, score])  # Shape: (14,)
 
         # Pass through state encoder
-        state_features = state_features
         for layer in self.state_encoder:
-            if isinstance(layer, nn.Linear):
-                state_features = layer(state_features)
-            else:
-                state_features = layer(state_features)
-
+            state_features = layer(state_features)
         # Get action embeddings using vmap
         action_features = jax.vmap(self.action_embedding)(
             valid_actions
@@ -97,11 +92,30 @@ class AwaleNetwork(eqx.Module):
                 values = self.apply_linear_batch(layer, values)
             else:
                 values = layer(values)
-
         return values.squeeze(-1)  # Shape: (num_actions,)
 
 
-# Helper function for initialization
+# Helper function for JIT compilation
+@eqx.filter_jit
+def forward(network, game_state, valid_actions, score):
+    """JIT-compiled forward pass."""
+    return network(game_state, valid_actions, score)
+
+
+# Helper function for gradient computation
+@eqx.filter_value_and_grad
+def loss_fn(network, game_state, valid_actions, score):
+    """Compute loss and gradients."""
+    output = network(game_state, valid_actions, score)
+    return jnp.mean(output)
+
+
+def compute_gradients(network, game_state, valid_actions, score):
+    """Compute gradients with respect to network parameters."""
+    loss, grads = loss_fn(network, game_state, valid_actions, score)
+    return grads
+
+
 def init_network(key: jax.random.PRNGKey = jax.random.PRNGKey(0)) -> AwaleNetwork:
     """Initialize the network with default parameters."""
     return AwaleNetwork(key)
