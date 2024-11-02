@@ -72,7 +72,7 @@ class AwaleNet(eqx.Module):
         scores: jnp.ndarray,
         valid_actions: jnp.ndarray,
         key: jax.random.PRNGKey,
-        training: bool = False,
+        training: bool = True,
     ) -> jnp.ndarray:
         """Forward pass through the network."""
         # Input validation
@@ -103,7 +103,7 @@ class AwaleNet(eqx.Module):
             x = jax.nn.relu(x)
 
             # Dropout (only during training)
-            if training and dropout_keys is not None:
+            if training:
                 dropout_key = dropout_keys[i]
                 mask = jax.random.bernoulli(dropout_key, 1 - self.dropout_rate, x.shape)
                 x = x * mask / (1 - self.dropout_rate)
