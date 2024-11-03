@@ -206,7 +206,7 @@ def calculate_reward(
 
     # Immediate reward based on seeds captured
     seeds_captured = current_score[player_id] - previous_score[player_id]
-    reward += seeds_captured * 10.0  # Base points for capturing seeds
+    reward += seeds_captured * 5.0  # Base points for capturing seeds
 
     # Strategic position rewards
     def evaluate_position(board, player):
@@ -240,7 +240,7 @@ def calculate_reward(
             current_score[player_id] > current_score[1 - player_id], 100, 0
         )
         loss_penalty = jnp.where(
-            current_score[player_id] < current_score[1 - player_id], -50, 0
+            current_score[player_id] < current_score[1 - player_id], -100, 0
         )
         draw_bonus = jnp.where(
             current_score[player_id] == current_score[1 - player_id], 25, 0
