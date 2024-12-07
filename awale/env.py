@@ -1,147 +1,76 @@
-import jax.numpy as jnp
-from jax import jit
-from typing import Tuple
+import mlx.core as mx
+from typing import NamedTuple, Tuple
 from awale.utils import (
     distribute_seeds,
-    capture_seeds,
-    State,
-    update_game_state,
-    get_action_space,
+    determine_game_over,
     calculate_reward,
+    get_action_space,
 )
-from awale.viewer import save_board_svg
-import jax.random as random
-from jax.random import PRNGKey
-
-# Constantes du jeu
-BOARD_SIZE = 12
-SEEDS_PER_PIT = 4
-PLAYER_SIDE_SIZE = 6
-INITIAL_SCORE = 0
-CAPTURE_REWARD_MULTIPLIER = 0.5
+from typing_extensions import TypeAlias
 
 
-class AwaleJAX:
-    """
-    Implementation of the Awale game using JAX for optimum performance.
-    The game follows the traditional Awale rules with seed capture.
-    """
+# Define a type alias for a board, which is an array.
+Board: TypeAlias = mx.array
 
+
+class State(NamedTuple):
+    """The state of the game"""
+
+    board: Board  # The current state of the game
+    action_space: mx.array  # The valid actions for the current player
+    score: mx.array  # The scores for the two players
+    current_player: mx.int8  # The current player (0 or 1)
+
+
+class Awale:
     def __init__(self):
         """
         Initiates a new game of Awale.
         Creates the initial state of the game using a fixed random key.
         """
-        self.state = self.reset(PRNGKey(0))
+        self.state = self.reset()
 
-    @staticmethod
-    @jit
-    def reset(key: PRNGKey) -> State:
+    def reset(self):
         """
         Resets or starts a new game.
 
-        Args:
-            key: PRNGKey for random number generation
-
         Returns:
-            State: Initial state of play
+            Initial state of play
         """
         # Randomly determines the first player (0 or 1)
-        current_player = (random.uniform(key) > 0.5).astype(jnp.int8)
+        current_player = (mx.random.uniform() > 0.5).astype(mx.int8)
 
         # Calculates the space of valid actions for the current player
-        action_space = get_action_space(current_player)
+        action_space = mx.where(
+            current_player == 0,
+            mx.array([0, 1, 2, 3, 4, 5], dtype=mx.int8),
+            mx.array([6, 7, 8, 9, 10, 11], dtype=mx.int8),
+        )
 
-        # Create the initial tray with 4 seeds in each hole
-        board = jnp.full(BOARD_SIZE, SEEDS_PER_PIT, dtype=jnp.int8)
+        # Creates the initial tray with 4 seeds in each hole
+        board = mx.full(12, 4, dtype=mx.int8)
 
         # Sets scores to zero for both players
-        scores = jnp.zeros(2, dtype=jnp.int8)
+        scores = mx.zeros(2, dtype=mx.int8)
 
-        return State(
-            board=board,
-            action_space=action_space,
-            key=key,
-            score=scores,
-            current_player=current_player,
-        )
+        state = State(board, action_space, scores, current_player)
+        self.state = state
+        return state
 
-    def step(self, state: State, action: jnp.int8) -> Tuple[State, float, bool]:
-        """
-        Performs an action in the game.
-
-        Args:
-            state: Current state of play
-            action: Current state of play
-
-        Returns:
-            Tuple containing:
-            - New game state
-            - Reward obtained
-            - End of game indicator
-        """
-        # Collects and distributes seeds
-        seeds = state.board[action]
-        board = state.board.at[action].set(0)
-
-        # Seed distribution
-        board, final_pit = distribute_seeds(board, action, seeds)
-
-        # Capture seeds if possible
-        board, captured = capture_seeds(board, final_pit, state.current_player)
-
-        # Updating the score and calculating the initial reward
-        score = state.score.at[state.current_player].add(captured)
-
-        # Game status update
-        (new_board, new_score, done, new_player) = update_game_state(
-            board, score, state.current_player
-        )
-
-        # Filtering of valid actions (non-empty holes)
-        # Calculates valid action space for the next player
-        new_action_space = get_action_space(new_player)
-
-        # Create a mask for valid actions (positions with stones)
-        valid_actions_mask = board[new_action_space] > 0
-
-        # Filter action space to only valid actions
-        new_action_space = jnp.where(
-            valid_actions_mask, new_action_space, jnp.zeros_like(new_action_space)
-        )
-        new_action_space = new_action_space[valid_actions_mask]
-
-        # Creating a new state
-        new_state = State(
-            board=new_board,
-            action_space=new_action_space,
-            key=state.key,
-            score=new_score,
-            current_player=new_player,
-        )
+    def step(self, action: mx.int8):
+        board, captured_seeds = distribute_seeds(self.state.board, action)
+        scores = self.state.score.at[self.state.current_player].add(captured_seeds)
+        done, winner, info = determine_game_over(board, scores)
         reward = calculate_reward(
-            current_board=new_board,
-            previous_board=state.board,
-            current_score=new_score,
-            previous_score=state.score,
-            player_id=state.current_player,
-            game_over=done,
+            board, captured_seeds, self.state.current_player, done
         )
-        self.state = new_state
-        return new_state, reward, done
+        next_player = 1 - self.state.current_player
+        next_action_space = get_action_space(board, next_player)
+        state = State(board, next_action_space, scores, next_player)
+        self.state = state
+        return state, reward, done, info
 
-    @staticmethod
-    def render(state: State, filename: str = "awale_board.svg") -> None:
-        """
-        Displays the current state of the game board in the console.
-
-        Args:
-            state: Current state of the game to be displayed
-            filename: File name for saving the SVG file
-        """
-        save_board_svg(state.board, state.score, filename)
-
-    def __repr__(self) -> str:
+    def render(self):
         state = self.state
         # Prepares the tray lines for display
         top_row = state.board[6:0:-1]  # Inverts the top line for the display

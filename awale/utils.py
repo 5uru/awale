@@ -1,256 +1,209 @@
-import jax.numpy as jnp
-from jax import jit, lax
-
-from typing import NamedTuple, Tuple
-
-import chex
-from typing_extensions import TypeAlias
+import mlx.core as mx
 
 
-# Define a type alias for a board, which is an array.
-Board: TypeAlias = chex.Array
-
-
-class State(NamedTuple):
-    """The state of the game"""
-
-    board: Board  # The current state of the game
-    action_space: chex.Array  # The valid actions for the current player
-    key: chex.PRNGKey  # The random key for the game
-    score: chex.Array  # The scores for the two players
-    current_player: chex.Numeric  # The current player (0 or 1)
-
-
-@jit
-def distribute_seeds(
-    board: Board, current_pit: jnp.int8, seeds: jnp.int8
-) -> Tuple[Board, jnp.int8]:
-    """Distribute seeds in the pits"""
-
-    # We'll create a function that contains the loop body
-    def loop_body(carry):
-        seeds_carry, current_pit_carry, state_carry = carry
-        current_pit_carry = (current_pit_carry + 1) % 12  # Move to the next pit
-        # Use lax.cond to conditionally update the state
-        state_carry = lax.cond(
-            current_pit_carry != action,
-            lambda s: s.at[current_pit_carry].add(1),  # Add a seed to the pit
-            lambda s: s,
-            state_carry,
-        )
-        seeds_carry = seeds_carry - 1
-        return seeds_carry, current_pit_carry, state_carry
-
-    # Define the while loop condition
-    def cond_fun(carry):
-        seeds_carry, current_pit_carry, state_carry = carry
-        return seeds_carry > 0
-
-    # Initial carry values
-    action = current_pit
-    init_carry = (seeds, current_pit, board)
-
-    # Run the while loop
-    final_seeds, final_pit, final_state = lax.while_loop(
-        cond_fun, loop_body, init_carry
-    )
-    return final_state, final_pit
-
-
-@jit
-def capture_seeds(
-    board: Board, last_pit: jnp.int8, current_player: jnp.int8
-) -> Tuple[Board, jnp.int8]:
-    """Capture seeds from the opponent's side"""
-    opponent_side = (1 - current_player) * 6
-
-    def condition(carry):
-        """Check if the last seed lands in a two or three pit on the opponent's side"""
-        _, last_pit, _ = carry
-        return jnp.logical_and(
-            jnp.logical_and(opponent_side <= last_pit, last_pit < opponent_side + 6),
-            jnp.logical_and(2 <= board[last_pit], board[last_pit] <= 3),
-        )
-
-    def body(carry):
-        """Capture seeds from the opponent's side"""
-        state, last_pit, captured = carry
-        captured += state[last_pit]
-        state = state.at[last_pit].set(0)
-        last_pit -= 1
-        return state, last_pit, captured
-
-    initial_carry = (  # Initial values for the loop
-        board,
-        last_pit,
-        0,
-    )  # 0 is the initially captured value
-    final_state, final_last_pit, total_captured = lax.while_loop(
-        condition, body, initial_carry
-    )
-    return final_state, total_captured
-
-
-@jit
-def calculate_end_game_reward(
-    scores: chex.Array, current_player: jnp.int8
-) -> jnp.float16:
-    """Calculate the reward when the game ends"""
-    return lax.select(
-        scores[current_player] > scores[1 - current_player],
-        100,
-        lax.select(
-            scores[current_player] < scores[1 - current_player],
-            -100,
-            -50,
-        ),
-    )
-
-
-@jit
-def determine_winner(scores: chex.Array) -> jnp.int8:
-    """Determine the winner of the game"""
-    return lax.select(
-        scores[0] > scores[1],
-        0,
-        lax.select(scores[1] > scores[0], 1, -1),
-    )
-
-
-@jit
-def is_player_side_empty(player: jnp.int8, board: Board) -> jnp.bool_:
-    """Check if the player's side is empty"""
-    start = player * 6
-    player_side = lax.dynamic_slice(board, (start,), (6,))
-    return jnp.all(player_side == 0)
-
-
-@jit
-def handle_empty_side(board: Board, scores: chex.Array) -> Tuple[Board, chex.Array]:
-    """Handle the case when one player's side is empty"""
-    # If one side is empty, all remaining seeds go to the other player
-    scores = scores.at[0].add(jnp.sum(board[:6], dtype=jnp.int8))
-    scores = scores.at[1].add(jnp.sum(board[6:], dtype=jnp.int8))
-    board = jnp.zeros_like(board)
-    return board, scores
-
-
-@jit
-def get_action_space(current_player: jnp.int8) -> chex.Array:
-    """Returns pre-computed action spaces for both players."""
-    return lax.select(
-        current_player == 0,
-        jnp.array([0, 1, 2, 3, 4, 5], dtype=jnp.int8),
-        jnp.array([6, 7, 8, 9, 10, 11], dtype=jnp.int8),
-    )
-
-
-@jit
-def update_game_state(
-    board: jnp.array,
-    score: jnp.array,
-    current_player: jnp.int8,
-) -> Tuple[Board, chex.Array, jnp.bool_, jnp.int8]:
-    """Update the game state after a move"""
-    # Check if the game ends by score
-    done = jnp.where(
-        jnp.max(score) > 23, True, False
-    )  # The game ends when a player reaches 24 points
-
-    # Check if the game ends by empty side
-    empty_side_condition = jnp.logical_or(
-        is_player_side_empty(0, board), is_player_side_empty(1, board)
-    )
-
-    board, score = lax.cond(
-        empty_side_condition,
-        lambda x: handle_empty_side(*x),
-        lambda x: x,
-        (board, score),
-    )
-
-    done = jnp.where(empty_side_condition, True, done)
-
-    # Switch to the next player
-    current_player = jnp.where(done, current_player, 1 - current_player)
-
-    current_player = jnp.where(done, determine_winner(score), current_player)
-
-    return board, score, done, current_player
-
-
-@jit
-def calculate_reward(
-    current_board,
-    previous_board,
-    current_score,
-    previous_score,
-    player_id,
-    game_over=False,
-):
+def get_action_space(board, player_id):
     """
-    Calculate reward for an Awale game state transition in JAX.
+    Détermine l'ensemble des actions valides pour un joueur donné.
 
     Args:
-        current_board: jnp.ndarray - Current state of the board (12 pits)
-        previous_board: jnp.ndarray - Previous state of the board
-        current_score: jnp.ndarray - Current scores for both players
-        previous_score: jnp.ndarray - Previous scores for both players
-        player_id: int - Current player (0 or 1)
-        game_over: bool - Whether the game has ended
+        board : État actuel du plateau
+        player_id (int): ID du joueur (0 ou 1)
 
     Returns:
-        float: Reward value for the current state
+         Liste des indices des trous jouables
     """
-    reward = 0.0
+    valid_actions = []
+    player_id = int(player_id)  # Convert player_id to a standard Python integer
+    start_pit = player_id * 6
+    end_pit = start_pit + 6
 
-    # Immediate reward based on seeds captured
-    seeds_captured = current_score[player_id] - previous_score[player_id]
-    reward += seeds_captured * 5.0  # Base points for capturing seeds
+    # Vérifier si l'adversaire n'a pas de graines
+    opponent_side = board[6:12] if player_id == 0 else board[:6]
+    opponent_empty = sum(opponent_side) == 0
 
-    # Strategic position rewards
-    def evaluate_position(board, player):
-        # Adjust indices for 12-pit board (6 pits per player)
-        player_pits = jnp.where(player == 0, board[:6], board[6:12])
+    for pit in range(start_pit, end_pit):
+        seeds = board[pit]
 
-        # Reward for keeping seeds in play
-        seeds_in_play = jnp.sum(player_pits)
-        position_value = seeds_in_play * 0.5
+        # Ne pas inclure les trous vides
+        if seeds == 0:
+            continue
 
-        # Reward for having moves available (non-empty pits)
-        available_moves = jnp.sum(player_pits > 0) * 2.0
+        # Vérifier si ce coup peut nourrir l'adversaire quand nécessaire
+        if opponent_empty:
+            # Calculer si les graines atteignent le camp adverse
+            distance_to_opponent = (12 - pit) if player_id == 0 else (6 - pit)
+            if seeds > distance_to_opponent:
+                valid_actions.append(pit)
+        else:
+            # Si l'adversaire a des graines, tous les coups non vides sont valides
+            valid_actions.append(pit)
 
-        # Penalty for vulnerable positions (pits with 2 or 3 seeds)
-        vulnerable_pits = jnp.sum((player_pits == 2) | (player_pits == 3))
-        position_value -= vulnerable_pits * 1.5
+        # Vérification supplémentaire pour éviter les coups qui font plus d'un tour complet
+        if seeds > 11:
+            # S'assurer que ce n'est pas un coup qui capture toutes les graines adverses
+            test_board = board.copy()
+            test_board, captured = distribute_seeds(test_board, pit)
+            opponent_after = sum(test_board[6:12] if player_id == 0 else test_board[:6])
+            if opponent_after == 0:
+                valid_actions.remove(pit)
 
-        # Add reward for available moves
-        position_value += available_moves
+    return mx.array(valid_actions, dtype=mx.int8)
 
-        return position_value
 
-    # Add position evaluation to reward
-    current_position_value = evaluate_position(current_board, player_id)
-    previous_position_value = evaluate_position(previous_board, player_id)
-    reward += current_position_value - previous_position_value
+def distribute_seeds(board, pit_index) -> [mx.array, mx.int8]:
+    # Récupérer les graines du trou sélectionné
+    seeds_to_distribute = board[pit_index]
+    board[pit_index] = 0
 
-    # End game rewards
-    def game_over_rewards(reward):
-        win_bonus = jnp.where(
-            current_score[player_id] > current_score[1 - player_id], 100, 0
-        )
-        loss_penalty = jnp.where(
-            current_score[player_id] < current_score[1 - player_id], -100, 0
-        )
-        draw_bonus = jnp.where(
-            current_score[player_id] == current_score[1 - player_id], 25, 0
-        )
-        return reward + win_bonus + loss_penalty + draw_bonus
+    if seeds_to_distribute == 0:
+        return board, 0
 
-    reward = lax.cond(game_over, game_over_rewards, lambda x: x, reward)
+    current_pit = pit_index
+    captured_seeds = 0
 
-    # Penalty for illegal moves (if any pit has more than 48 seeds)
-    illegal_move_penalty = jnp.where(jnp.max(current_board) > 48, -1000, 0)
-    reward += illegal_move_penalty
+    # Distribution des graines
+    while seeds_to_distribute > 0:
+        current_pit = (current_pit + 1) % 12
+        # Ne pas redistribuer dans le trou de départ
+        if current_pit != pit_index:
+            board = board.at[current_pit].add(1)
+            seeds_to_distribute -= 1
 
-    return reward
+    # Vérification des captures (côté opposé seulement)
+    current_player_side = pit_index // 6
+    opposite_side = 1 - current_player_side
+
+    # On capture si la dernière graine fait 2 ou 3.
+    while current_pit // 6 == opposite_side and board[current_pit] in [2, 3]:
+        captured_seeds += board[current_pit]
+        board[current_pit] = 0
+        if current_pit == 0:
+            break
+        current_pit -= 1
+
+    return board, captured_seeds
+
+
+def determine_game_over(board, scores):
+    """
+    Détermine si le jeu est terminé et qui est le gagnant.
+
+    Args:
+        board : État actuel du plateau
+        scores : Scores des joueurs
+
+    Returns:
+        tuple: (is_game_over, winner, reason)
+            - is_game_over (bool): True si le jeu est terminé
+            - winner (int or None): 0 pour joueur 1, 1 pour joueur 2, None pour égalité
+            - reason (str): Raison de la fin du jeu
+    """
+    total_seeds_on_board = sum(board)
+    total_captured = sum(scores)
+
+    # Vérifier si un joueur a plus de la moitié des graines
+    if scores[0] > 24:
+        return True, 0, "Joueur 1 a capturé la majorité des graines"
+    if scores[1] > 24:
+        return True, 1, "Joueur 2 a capturé la majorité des graines"
+
+    # Vérifier s'il ne reste plus de graines sur le plateau
+    if total_seeds_on_board == 0:
+        if scores[0] > scores[1]:
+            return True, 0, "Plus de graines - Joueur 1 gagne"
+        elif scores[1] > scores[0]:
+            return True, 1, "Plus de graines - Joueur 2 gagne"
+        else:
+            return True, None, "Match nul"
+
+    # Vérifier si un joueur n'a plus de graines dans son camp
+    player_1_seeds = sum(board[:6])
+    player_2_seeds = sum(board[6:12])
+
+    # Vérifier si un joueur ne peut plus nourrir l'autre
+    def can_feed_opponent(board, player_side):
+        start = player_side * 6
+        end = (player_side + 1) * 6
+        opponent_empty = sum(board[1 - player_side * 6 : (2 - player_side) * 6]) == 0
+
+        if opponent_empty:
+            # Vérifier si au moins un coup peut donner des graines à l'adversaire
+            for i in range(start, end):
+                if board[i] > (
+                    11 - i
+                ):  # Assez de graines pour atteindre le camp adverse
+                    return True
+        return False
+
+    # Si un joueur ne peut pas nourrir l'autre et que c'est son tour
+    if player_1_seeds == 0 or (not can_feed_opponent(board, 0) and player_2_seeds == 0):
+        remaining_seeds = total_seeds_on_board
+        player_1_total = scores[0] + remaining_seeds
+        player_2_total = scores[1]
+
+        if player_1_total > player_2_total:
+            return True, 0, "Impossibilité de nourrir - Joueur 1 gagne"
+        elif player_2_total > player_1_total:
+            return True, 1, "Impossibilité de nourrir - Joueur 2 gagne"
+        else:
+            return True, None, "Match nul - Impossibilité de nourrir"
+
+    # Le jeu continue
+    return False, None, "Jeu en cours"
+
+
+def calculate_reward(board, captured_seeds, player_id, game_over=False):
+    """
+    Calcule la récompense pour un état donné du jeu d'awalé.
+
+    Args:
+        board : État actuel du plateau
+        captured_seeds : Nombre de graines capturées dans le dernier coup
+        player_id : ID du joueur (0 ou 1)
+        game_over : Indique si le jeu est terminé
+
+    Returns:
+        float: La récompense calculée
+    """
+    # Points de base pour la capture de graines
+    reward = captured_seeds * 2.0
+
+    # Récompense/pénalité pour fin de partie
+    if game_over:
+        total_seeds = sum(board)
+        if total_seeds == 0:
+            player_score = captured_seeds
+            if player_score > 24:  # Plus de la moitié des graines
+                reward += 50.0  # Bonus de victoire
+            elif player_score == 24:  # Égalité
+                reward += 10.0
+            else:
+                reward -= 50.0  # Pénalité de défaite
+
+    # Convert player_id to a standard Python integer
+    player_id = int(player_id)
+
+    # Évaluation de la position stratégique
+    player_side = board[player_id * 6 : (player_id + 1) * 6]
+    opponent_side = board[(1 - player_id) * 6 : (2 - player_id) * 6]
+
+    # Bonus pour maintenir des graines de son côté
+    reward += sum(player_side) * 0.1
+
+    # Bonus pour les positions permettant des captures futures
+    potential_captures = sum(seeds in [2, 3] for seeds in opponent_side)
+    reward += potential_captures * 0.5
+
+    # Pénalité pour les positions vulnérables
+    vulnerable_positions = sum(seeds in [2, 3] for seeds in player_side)
+    reward -= vulnerable_positions * 0.3
+
+    # Bonus pour le contrôle du centre (trous 2-4)
+    center_control = sum(player_side[2:5]) * 0.2
+    reward += center_control
+
+    # Pénalité pour les coups qui laissent l'adversaire sans coup possible
+    if all(seeds == 0 for seeds in opponent_side):
+        reward -= 40.0
+
+    return float(reward)
