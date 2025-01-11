@@ -1,7 +1,6 @@
-# test_awale.py
-import mlx.core as mx
 import pytest
 from awale.env import Awale, State
+from jax import numpy as jnp
 
 
 def test_reset():
@@ -20,7 +19,7 @@ def test_step():
     action = initial_state.action_space[0]
     state, reward, done, info = game.step(action)
     assert isinstance(state, State)
-    assert isinstance(reward, float)
+    assert reward.dtype == jnp.float16
     assert isinstance(done, bool)
     assert isinstance(info, str)
 

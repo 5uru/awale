@@ -1,4 +1,4 @@
-import mlx.core as mx
+from jax import numpy as jnp
 
 
 def get_action_space(board, player_id):
@@ -12,7 +12,7 @@ def get_action_space(board, player_id):
     Returns:
          Liste des indices des trous jouables
     """
-    valid_actions = []
+    valid_actions = jnp.zeros(12, dtype=jnp.int8)
     player_id = int(player_id)  # Convert player_id to a standard Python integer
     start_pit = player_id * 6
     end_pit = start_pit + 6
@@ -33,27 +33,27 @@ def get_action_space(board, player_id):
             # Calculer si les graines atteignent le camp adverse
             distance_to_opponent = (12 - pit) if player_id == 0 else (6 - pit)
             if seeds > distance_to_opponent:
-                valid_actions.append(pit)
+                valid_actions = valid_actions.at[pit].set(1)
         else:
             # Si l'adversaire a des graines, tous les coups non vides sont valides
-            valid_actions.append(pit)
+            valid_actions = valid_actions.at[pit].set(1)
 
         # Vérification supplémentaire pour éviter les coups qui font plus d'un tour complet
         if seeds > 11:
             # S'assurer que ce n'est pas un coup qui capture toutes les graines adverses
-            test_board = board.copy()
+            test_board = board.clone()
             test_board, captured = distribute_seeds(test_board, pit)
             opponent_after = sum(test_board[6:12] if player_id == 0 else test_board[:6])
             if opponent_after == 0:
-                valid_actions.remove(pit)
+                valid_actions[pit] = 0
 
-    return mx.array(valid_actions, dtype=mx.int8)
+    return valid_actions
 
 
-def distribute_seeds(board, pit_index) -> [mx.array, mx.int8]:
+def distribute_seeds(board, pit_index) -> [jnp.array, jnp.int8]:
     # Récupérer les graines du trou sélectionné
     seeds_to_distribute = board[pit_index]
-    board[pit_index] = 0
+    board = board.at[pit_index].set(0)
 
     if seeds_to_distribute == 0:
         return board, 0
@@ -76,7 +76,7 @@ def distribute_seeds(board, pit_index) -> [mx.array, mx.int8]:
     # On capture si la dernière graine fait 2 ou 3.
     while current_pit // 6 == opposite_side and board[current_pit] in [2, 3]:
         captured_seeds += board[current_pit]
-        board[current_pit] = 0
+        board = board.at[current_pit].set(0)
         if current_pit == 0:
             break
         current_pit -= 1
@@ -163,7 +163,7 @@ def calculate_reward(board, captured_seeds, player_id, game_over=False):
         game_over : Indique si le jeu est terminé
 
     Returns:
-        float: La récompense calculée
+        jnp.float16: La récompense calculée
     """
     # Points de base pour la capture de graines
     reward = captured_seeds * 2.0
@@ -206,4 +206,4 @@ def calculate_reward(board, captured_seeds, player_id, game_over=False):
     if all(seeds == 0 for seeds in opponent_side):
         reward -= 40.0
 
-    return float(reward)
+    return jnp.float16(reward)

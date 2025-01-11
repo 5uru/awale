@@ -1,5 +1,4 @@
-import mlx.core as mx
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 from awale.utils import (
     distribute_seeds,
     determine_game_over,
@@ -7,19 +6,20 @@ from awale.utils import (
     get_action_space,
 )
 from typing_extensions import TypeAlias
-
+from jax import numpy as jnp
+import random
 
 # Define a type alias for a board, which is an array.
-Board: TypeAlias = mx.array
+Board: TypeAlias = jnp.array
 
 
 class State(NamedTuple):
     """The state of the game"""
 
     board: Board  # The current state of the game
-    action_space: mx.array  # The valid actions for the current player
-    score: mx.array  # The scores for the two players
-    current_player: mx.int8  # The current player (0 or 1)
+    action_space: jnp.array  # The valid actions for the current player
+    score: jnp.array  # The scores for the two players
+    current_player: jnp.int8  # The current player (0 or 1)
 
 
 class Awale:
@@ -38,33 +38,33 @@ class Awale:
             Initial state of play
         """
         # Randomly determines the first player (0 or 1)
-        current_player = (mx.random.uniform() > 0.5).astype(mx.int8)
+        current_player = jnp.array(random.choice([0, 1]), dtype=jnp.int8)
 
         # Calculates the space of valid actions for the current player
-        action_space = mx.where(
+        action_space = jnp.where(
             current_player == 0,
-            mx.array([0, 1, 2, 3, 4, 5], dtype=mx.int8),
-            mx.array([6, 7, 8, 9, 10, 11], dtype=mx.int8),
+            jnp.array([0, 1, 2, 3, 4, 5], dtype=jnp.int8),
+            jnp.array([6, 7, 8, 9, 10, 11], dtype=jnp.int8),
         )
 
         # Creates the initial tray with 4 seeds in each hole
-        board = mx.full(12, 4, dtype=mx.int8)
+        board = jnp.full((12,), 4, dtype=jnp.int8)
 
         # Sets scores to zero for both players
-        scores = mx.zeros(2, dtype=mx.int8)
+        scores = jnp.zeros(2, dtype=jnp.int8)
 
         state = State(board, action_space, scores, current_player)
         self.state = state
         return state
 
-    def step(self, action: mx.int8):
+    def step(self, action: jnp.int8):
         board, captured_seeds = distribute_seeds(self.state.board, action)
-        scores = self.state.score.at[self.state.current_player].add(captured_seeds)
+        scores = self.state.score.clone()
+        current_player = int(self.state.current_player)  # Convert to integer
+        scores = scores.at[current_player].add(captured_seeds)
         done, winner, info = determine_game_over(board, scores)
-        reward = calculate_reward(
-            board, captured_seeds, self.state.current_player, done
-        )
-        next_player = 1 - self.state.current_player
+        reward = calculate_reward(board, captured_seeds, current_player, done)
+        next_player = 1 - current_player
         next_action_space = get_action_space(board, next_player)
         state = State(board, next_action_space, scores, next_player)
         self.state = state
