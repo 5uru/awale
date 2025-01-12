@@ -1,5 +1,5 @@
 import pytest
-from awale.env import Awale, State
+from awale_env.env import Awale, State
 from jax import numpy as jnp
 
 

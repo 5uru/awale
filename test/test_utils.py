@@ -1,5 +1,5 @@
 import pytest
-from awale.utils import (
+from awale_env.utils import (
     distribute_seeds,
     get_action_space,
     determine_game_over,
