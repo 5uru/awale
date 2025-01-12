@@ -45,7 +45,7 @@ def get_action_space(board, player_id):
             test_board, captured = distribute_seeds(test_board, pit)
             opponent_after = sum(test_board[6:12] if player_id == 0 else test_board[:6])
             if opponent_after == 0:
-                valid_actions[pit] = 0
+                valid_actions = valid_actions.at[pit].set(0)
 
     return valid_actions
 
@@ -99,7 +99,6 @@ def determine_game_over(board, scores):
             - reason (str): Raison de la fin du jeu
     """
     total_seeds_on_board = sum(board)
-    total_captured = sum(scores)
 
     # Vérifier si un joueur a plus de la moitié des graines
     if scores[0] > 24:

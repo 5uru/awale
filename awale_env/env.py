@@ -1,5 +1,5 @@
 from typing import NamedTuple
-from awale.utils import (
+from awale_env.utils import (
     distribute_seeds,
     determine_game_over,
     calculate_reward,
@@ -43,8 +43,8 @@ class Awale:
         # Calculates the space of valid actions for the current player
         action_space = jnp.where(
             current_player == 0,
-            jnp.array([0, 1, 2, 3, 4, 5], dtype=jnp.int8),
-            jnp.array([6, 7, 8, 9, 10, 11], dtype=jnp.int8),
+            jnp.array([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0], dtype=jnp.int8),
+            jnp.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1], dtype=jnp.int8),
         )
 
         # Creates the initial tray with 4 seeds in each hole
